@@ -1,6 +1,25 @@
 {
+  // CORRECTION: Utilise le chemin standard pour toutes les applications Expo.
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
-  }
+    "target": "esnext",
+    "lib": ["esnext"],
+    "jsx": "react-native",
+
+    // CORRECTION: Résout le problème de 'moduleResolution' en définissant 'module'.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "allowJs": true
+  },
+  "include": ["**/*.ts", "**/*.tsx", "**/*.d.ts", "nativewind-env.d.ts"],
+  "exclude": ["node_modules"]
 }

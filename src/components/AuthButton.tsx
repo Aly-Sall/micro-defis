@@ -13,7 +13,7 @@ GoogleSignin.configure({
     "16744214227-r3rk0uerfi6f3ol776cbimvan1ijoufp.apps.googleusercontent.com",
 
   iosClientId:
-    "16744214227-a1gqf1trfp0ne2ctcek3v9rvbao7pht5.apps.googleusercontent.com.apps.googleusercontent.com",
+    "16744214227-a1gqf1trfp0ne2ctcek3v9rvbao7pht5.apps.googleusercontent.com",
 });
 
 export default function AuthButton() {

@@ -25,7 +25,8 @@ export const DEFAULT_CHALLENGE: Challenge = {
   focusKey: "introspection",
 };
 
-export const CHALLENGES: Challenge[] = [
+// On renomme la liste statique pour la distinguer du générateur
+export const STATIC_CHALLENGES: Challenge[] = [
   // --- NIVEAU 1 : DÉBUTANT ---
   {
     id: 101,
@@ -117,6 +118,182 @@ export const CHALLENGES: Challenge[] = [
   },
 ];
 
+// Pour la compatibilité ascendante si d'autres fichiers importent CHALLENGES
+export const CHALLENGES = STATIC_CHALLENGES;
+
+// --- SYSTÈME DE GÉNÉRATION PROCÉDURALE (Le "Cerveau" Intuitif) ---
+
+interface ChallengeTemplate {
+  title: string;
+  templates: string[]; // Phrases à trous (ex: "Dis bonjour à {target}")
+  vars: Record<string, string[]>; // Variables pour remplir les trous
+  category: string;
+  level: number;
+  baseXp: number;
+  difficulty: number;
+  duration: string;
+}
+
+// Modèles de génération par Focus (Catégorie)
+const GENERATOR_TEMPLATES: Record<string, ChallengeTemplate[]> = {
+  social: [
+    {
+      title: "L'Interaction Spontanée",
+      templates: [
+        "Demande {question} à {target} {context}.",
+        "Fais un compliment sur {sujet} à {target}.",
+        "Souhaite une bonne journée à {target} {context}.",
+      ],
+      vars: {
+        question: [
+          "l'heure",
+          "ton chemin",
+          "une recommandation",
+          "l'avis sur ce produit",
+        ],
+        target: ["un passant", "un commerçant", "un collègue", "un voisin"],
+        context: [
+          "dans la rue",
+          "à la boulangerie",
+          "dans les transports",
+          "au travail",
+        ],
+        sujet: ["sa tenue", "son sourire", "son efficacité", "sa bonne humeur"],
+      },
+      category: "Social",
+      level: 1,
+      baseXp: 20,
+      difficulty: 1,
+      duration: "2 min",
+    },
+  ],
+  conversation: [
+    {
+      title: "Le Maître des Mots",
+      templates: [
+        "Pose une question ouverte sur {topic} à {target}.",
+        "Relance une conversation avec {target} en parlant de {topic}.",
+      ],
+      vars: {
+        topic: [
+          "ses projets du week-end",
+          "un film récent",
+          "ses hobbies",
+          "la météo (avec humour)",
+        ],
+        target: [
+          "un collègue",
+          "un ami",
+          "un membre de ta famille",
+          "une connaissance",
+        ],
+      },
+      category: "Social",
+      level: 2,
+      baseXp: 25,
+      difficulty: 2,
+      duration: "5 min",
+    },
+  ],
+  expression: [
+    {
+      title: "Opinion Assumée",
+      templates: [
+        "Donne ton avis sur {sujet} {context} sans t'excuser.",
+        "Propose une idée concernant {sujet} à {target}.",
+      ],
+      vars: {
+        sujet: [
+          "le choix du déjeuner",
+          "un projet en cours",
+          "une actualité légère",
+        ],
+        context: [
+          "en réunion",
+          "lors d'un repas",
+          "dans une discussion de groupe",
+        ],
+        target: ["ton groupe d'amis", "tes collègues", "ta famille"],
+      },
+      category: "Carrière",
+      level: 2,
+      baseXp: 30,
+      difficulty: 2,
+      duration: "3 min",
+    },
+  ],
+  confiance: [
+    {
+      title: "Zone de Courage",
+      templates: [
+        "Fais {action} pendant {duration} {context}.",
+        "Tiens le regard de {target} pendant {duration}.",
+      ],
+      vars: {
+        action: [
+          "une marche tête haute",
+          "un sourire franc",
+          "un exercice de respiration",
+        ],
+        duration: [
+          "2 minutes",
+          "le temps d'une chanson",
+          "le trajet vers le travail",
+        ],
+        context: [
+          "dans la rue",
+          "dans les transports",
+          "dans une salle d'attente",
+        ],
+        target: ["un inconnu", "un interlocuteur", "ton reflet"],
+      },
+      category: "Bien-être",
+      level: 1,
+      baseXp: 15,
+      difficulty: 1,
+      duration: "5 min",
+    },
+  ],
+};
+
+// Utilitaires pour le générateur
+const pickRandom = (arr: string[]) =>
+  arr[Math.floor(Math.random() * arr.length)];
+const fillTemplate = (template: string, vars: Record<string, string[]>) => {
+  return template.replace(/{(\w+)}/g, (_, key) =>
+    vars[key] ? pickRandom(vars[key]) : `{${key}}`,
+  );
+};
+
+const generateChallenge = (
+  level: number,
+  focusKey: string = "social",
+): Challenge => {
+  // 1. Sélectionner un template aléatoire pour ce focus
+  const templates =
+    GENERATOR_TEMPLATES[focusKey] || GENERATOR_TEMPLATES["social"];
+  const templateData = templates[Math.floor(Math.random() * templates.length)];
+
+  // 2. Remplir les trous (Mad Libs style)
+  const description = fillTemplate(
+    pickRandom(templateData.templates),
+    templateData.vars,
+  );
+
+  // 3. Construire l'objet Challenge
+  return {
+    id: Date.now() + Math.floor(Math.random() * 10000), // ID unique généré
+    level: level,
+    title: templateData.title,
+    description: description,
+    category: templateData.category,
+    difficulty: templateData.difficulty,
+    duration: templateData.duration,
+    xp: templateData.baseXp,
+    focusKey: focusKey,
+  };
+};
+
 /**
  * MOTEUR DE DÉFIS INTELLIGENT
  * Sélectionne un défi basé sur le niveau de l'utilisateur
@@ -124,36 +301,46 @@ export const CHALLENGES: Challenge[] = [
  */
 export const getSmartChallenge = (
   userLevel: number,
-  excludeIds: (number | string)[] = [] // IDs à éviter (déjà faits ou skip)
+  excludeIds: (number | string)[] = [], // IDs à éviter (déjà faits ou skip)
+  targetFocus?: string, // Focus optionnel (ex: 'social', 'confiance')
 ): Challenge => {
-  // 1. Filtrer par niveau
+  // 1. Filtrer les défis STATIQUES par niveau
   // Si userLevel est 1, on prend les niveaux 1.
   // Si userLevel est 2, on prend les niveaux 1 et 2 (pour varier).
   // Si userLevel est 3, on prend tout le monde.
-  const eligibleChallenges = CHALLENGES.filter((c) => c.level <= userLevel);
+  const eligibleStatic = STATIC_CHALLENGES.filter((c) => c.level <= userLevel);
 
   // 2. Exclure les IDs passés en paramètre
   // On convertit les IDs en string pour être sûr de la comparaison
   const excludeSet = new Set(excludeIds.map((id) => id.toString()));
 
-  const availableChallenges = eligibleChallenges.filter(
-    (c) => !excludeSet.has(c.id.toString())
+  let availableStatic = eligibleStatic.filter(
+    (c) => !excludeSet.has(c.id.toString()),
   );
 
-  // 3. Sélectionner un défi aléatoire
-  if (availableChallenges.length > 0) {
-    const randomIndex = Math.floor(Math.random() * availableChallenges.length);
-    return availableChallenges[randomIndex];
+  // 3. Filtrer par Focus si demandé
+  if (targetFocus) {
+    const focused = availableStatic.filter((c) => c.focusKey === targetFocus);
+    // Si on trouve des défis pour ce focus, on les priorise
+    if (focused.length > 0) {
+      availableStatic = focused;
+    }
   }
 
-  // FALLBACK : Si tous les défis de ce niveau sont épuisés/exclus
-  // On renvoie un défi du niveau de l'utilisateur, même s'il est dans la liste d'exclusion
-  // (Pour éviter de planter ou de ne rien afficher)
-  const fallbackPool = CHALLENGES.filter((c) => c.level === userLevel);
-  if (fallbackPool.length > 0) {
-    return fallbackPool[Math.floor(Math.random() * fallbackPool.length)];
+  // 4. DÉCISION : Statique ou Généré ?
+  // On introduit de l'aléatoire pour rendre ça "intuitif" et infini.
+  // Si on a épuisé les statiques, on génère forcément.
+  // Sinon, on a 40% de chance de générer un défi frais pour surprendre l'utilisateur.
+  const shouldGenerate = availableStatic.length === 0 || Math.random() > 0.6;
+
+  if (shouldGenerate) {
+    // Si pas de focus cible, on en prend un au hasard parmi les templates disponibles
+    const focus =
+      targetFocus || pickRandom(Object.keys(GENERATOR_TEMPLATES) as string[]);
+    return generateChallenge(userLevel, focus);
   }
 
-  // ULTIME SECOURS
-  return DEFAULT_CHALLENGE;
+  // 5. Sinon, on prend un défi statique (curated)
+  const randomIndex = Math.floor(Math.random() * availableStatic.length);
+  return availableStatic[randomIndex];
 };

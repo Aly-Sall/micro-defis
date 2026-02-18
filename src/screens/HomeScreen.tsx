@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, ScrollView, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  ScrollView,
+  ActivityIndicator,
+  TouchableOpacity,
+} from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useIsFocused } from "@react-navigation/native";
 import { Flame, Trophy, Check } from "lucide-react-native";
@@ -10,6 +16,7 @@ import ConfettiCannon from "react-native-confetti-cannon";
 import { Challenge, getSmartChallenge } from "../data/challenges";
 import ChallengeCard from "../components/ChallengeCard";
 import { useTheme } from "../context/ThemeContext"; // Pour gérer les couleurs des icônes
+import { FOCUS_AREAS, FocusArea } from "../data/focus_areas";
 
 // Clés de stockage
 const STORAGE_KEY = "@DailyChallenge_Data_v1";
@@ -33,12 +40,13 @@ export default function HomeScreen() {
 
   // États
   const [currentChallenge, setCurrentChallenge] = useState<Challenge | null>(
-    null
+    null,
   );
   const [isCompleted, setIsCompleted] = useState(false);
   const [streak, setStreak] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [userArchetype, setUserArchetype] = useState<string | null>(null);
+  const [selectedFocus, setSelectedFocus] = useState<string | null>(null);
 
   // --- CHARGEMENT ---
   const loadDailyData = async () => {
@@ -64,10 +72,16 @@ export default function HomeScreen() {
           setCurrentChallenge(data.challenge);
           setIsCompleted(data.completed);
           setStreak(data.streak || 0);
+          if (data.challenge?.focusKey)
+            setSelectedFocus(data.challenge.focusKey);
         } else {
           // C'est une NOUVELLE JOURNÉE
           // On génère un défi adapté au niveau
-          const newChallenge = getSmartChallenge(userLevel, []);
+          const newChallenge = getSmartChallenge(
+            userLevel,
+            [],
+            selectedFocus || undefined,
+          );
 
           // Calcul du streak : si hier était validé, on garde, sinon 0
           const newStreak =
@@ -81,7 +95,11 @@ export default function HomeScreen() {
         }
       } else {
         // PREMIER LANCEMENT DE L'HISTOIRE
-        const newChallenge = getSmartChallenge(userLevel, []);
+        const newChallenge = getSmartChallenge(
+          userLevel,
+          [],
+          selectedFocus || undefined,
+        );
         setCurrentChallenge(newChallenge);
         setStreak(0);
         saveDailyData(newChallenge, false, 0, today);
@@ -103,7 +121,7 @@ export default function HomeScreen() {
     challenge: Challenge,
     completed: boolean,
     streakCount: number,
-    date: string
+    date: string,
   ) => {
     const data = { challenge, completed, streak: streakCount, date };
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -114,6 +132,25 @@ export default function HomeScreen() {
       loadDailyData();
     }
   }, [isFocused]);
+
+  // --- CHANGEMENT DE FOCUS ---
+  const handleFocusChange = async (focusKey: string) => {
+    // Si le défi est déjà complété, on ne change rien (ou on pourrait proposer un défi bonus)
+    if (isCompleted) return;
+
+    setSelectedFocus(focusKey);
+    setIsLoading(true);
+
+    const storedLevel = await AsyncStorage.getItem(USER_LEVEL_KEY);
+    const userLevel = storedLevel ? parseInt(storedLevel, 10) : 1;
+
+    // On génère un nouveau défi basé sur ce focus
+    const newChallenge = getSmartChallenge(userLevel, [], focusKey);
+    setCurrentChallenge(newChallenge);
+
+    await saveDailyData(newChallenge, false, streak, new Date().toDateString());
+    setIsLoading(false);
+  };
 
   // --- ACTIONS ---
 
@@ -138,7 +175,7 @@ export default function HomeScreen() {
     try {
       // 1. Mise à jour Calendrier (Heatmap)
       const existingDatesJson = await AsyncStorage.getItem(
-        COMPLETED_CHALLENGES_KEY
+        COMPLETED_CHALLENGES_KEY,
       );
       const existingDates = existingDatesJson
         ? JSON.parse(existingDatesJson)
@@ -146,20 +183,19 @@ export default function HomeScreen() {
       existingDates[dateKey] = true;
       await AsyncStorage.setItem(
         COMPLETED_CHALLENGES_KEY,
-        JSON.stringify(existingDates)
+        JSON.stringify(existingDates),
       );
 
       // 2. Mise à jour Journal (Historique)
-      const existingReflectionsJson = await AsyncStorage.getItem(
-        REFLECTIONS_KEY
-      );
+      const existingReflectionsJson =
+        await AsyncStorage.getItem(REFLECTIONS_KEY);
       const existingReflections = existingReflectionsJson
         ? JSON.parse(existingReflectionsJson)
         : [];
 
       const alreadyExists = existingReflections.some(
         (item: any) =>
-          item.date === dateKey && item.challengeId === currentChallenge.id
+          item.date === dateKey && item.challengeId === currentChallenge.id,
       );
 
       if (!alreadyExists) {
@@ -174,7 +210,7 @@ export default function HomeScreen() {
         const updatedReflections = [newEntry, ...existingReflections];
         await AsyncStorage.setItem(
           REFLECTIONS_KEY,
-          JSON.stringify(updatedReflections)
+          JSON.stringify(updatedReflections),
         );
       }
     } catch (e) {
@@ -189,9 +225,11 @@ export default function HomeScreen() {
     const userLevel = storedLevel ? parseInt(storedLevel, 10) : 1;
 
     // On exclut le défi actuel pour ne pas retomber dessus
-    const newChallenge = getSmartChallenge(userLevel, [
-      currentChallenge?.id || "",
-    ]);
+    const newChallenge = getSmartChallenge(
+      userLevel,
+      [currentChallenge?.id || ""],
+      selectedFocus || undefined,
+    );
 
     setCurrentChallenge(newChallenge);
     setIsCompleted(false);
@@ -243,8 +281,8 @@ export default function HomeScreen() {
                 streak > 0
                   ? "#F59E0B"
                   : colorScheme === "dark"
-                  ? "#64748B"
-                  : "#94a3b8"
+                    ? "#64748B"
+                    : "#94a3b8"
               }
               size={20}
             />
@@ -274,6 +312,41 @@ export default function HomeScreen() {
             </Text>
           </View>
         </View>
+
+        {/* SÉLECTEUR DE FOCUS (Intention du jour) */}
+        {!isCompleted && (
+          <View className="mb-6">
+            <Text className="text-slate-600 dark:text-slate-300 font-semibold mb-3 ml-1">
+              Mon intention du jour
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="flex-row"
+            >
+              {FOCUS_AREAS.map((area) => {
+                const isActive = selectedFocus === area.key;
+                return (
+                  <TouchableOpacity
+                    key={area.key}
+                    onPress={() => handleFocusChange(area.key)}
+                    className={`mr-3 px-4 py-2 rounded-full border ${
+                      isActive
+                        ? "bg-indigo-100 border-indigo-500 dark:bg-indigo-900/50 dark:border-indigo-400"
+                        : "bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                    }`}
+                  >
+                    <Text
+                      className={`${isActive ? "text-indigo-700 dark:text-indigo-300 font-bold" : "text-slate-600 dark:text-slate-400"}`}
+                    >
+                      {area.emoji} {area.title}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
         {/* CARTE PRINCIPALE (Composant Accessible) */}
         <ChallengeCard

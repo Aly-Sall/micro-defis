@@ -3,7 +3,7 @@
 export const analyzeSentiment = async (text: string) => {
   try {
     // Remplace par ta véritable clé API Gemini
-    const API_KEY = "AIzaSyCDyzJDWV6JedWT3HV9TZx_sQjBA5qzuYs";
+    const API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
     const URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${API_KEY}`;
 
     const response = await fetch(URL, {

@@ -9,15 +9,19 @@ import {
   Alert,
 } from "react-native";
 import { X, Smile, Frown, Meh, Loader2 } from "lucide-react-native";
+import { analyzeSentiment } from "../services/aiService"; // Import du nouveau service
 
 interface ReflectionProps {
   isVisible: boolean;
   onClose: () => void;
-  onSave: (feeling: string, notes: string) => void;
+  onSave: (
+    feeling: string,
+    notes: string,
+    aiData: { score: number; label: string },
+  ) => void;
   isLoading: boolean;
 }
 
-// Les options émotionnelles
 const emotionOptions = [
   {
     key: "Confident",
@@ -39,122 +43,101 @@ export default function ChallengeReflectionModal({
   isVisible,
   onClose,
   onSave,
-  isLoading,
+  isLoading: parentLoading,
 }: ReflectionProps) {
   const [selectedFeeling, setSelectedFeeling] = useState("");
   const [notes, setNotes] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!selectedFeeling) {
-      Alert.alert(
-        "Attention",
-        "Veuillez sélectionner un sentiment pour continuer."
-      );
+      Alert.alert("Attention", "Veuillez sélectionner un sentiment.");
       return;
     }
     if (notes.trim().length < 10) {
-      Alert.alert(
-        "Attention",
-        "Veuillez écrire quelques lignes (minimum 10 caractères) sur votre expérience."
-      );
+      Alert.alert("Attention", "Veuillez écrire au moins 10 caractères.");
       return;
     }
-    onSave(selectedFeeling, notes.trim());
 
-    // Réinitialiser le formulaire après la soumission (gérée par le parent après succès)
-    // setSelectedFeeling('');
-    // setNotes('');
-  };
+    setIsAnalyzing(true);
+    const aiData = await analyzeSentiment(notes.trim());
+    setIsAnalyzing(false);
 
-  const handleClose = () => {
-    // Permettre la réinitialisation si l'utilisateur annule
+    onSave(selectedFeeling, notes.trim(), aiData);
     setSelectedFeeling("");
     setNotes("");
-    onClose();
   };
+
+  const isGlobalLoading = parentLoading || isAnalyzing;
 
   return (
     <Modal
       animationType="slide"
       transparent={true}
       visible={isVisible}
-      onRequestClose={handleClose}
+      onRequestClose={onClose}
     >
       <View className="flex-1 justify-end bg-black/70">
         <View className="bg-slate-950 rounded-t-3xl p-6 h-4/5">
-          {/* Header de la Modale */}
           <View className="flex-row justify-between items-center pb-4 border-b border-slate-800 mb-6">
             <Text className="text-2xl font-bold text-white">
               Ancrage Émotionnel
             </Text>
-            <TouchableOpacity onPress={handleClose} className="p-2">
+            <TouchableOpacity onPress={onClose} className="p-2">
               <X color="#94A3B8" size={24} />
             </TouchableOpacity>
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
-            <Text className="text-lg font-semibold text-white mb-2">
-              1. Comment vous êtes-vous senti(e) après avoir terminé le défi ?
+            <Text className="text-lg font-semibold text-white mb-4">
+              1. Comment vous sentez-vous ?
             </Text>
-
-            {/* Sélection d'Émotion */}
             <View className="flex-row flex-wrap justify-between mb-8">
-              {emotionOptions.map((option) => {
-                const isSelected = selectedFeeling === option.key;
-                return (
-                  <TouchableOpacity
-                    key={option.key}
-                    className={`w-[48%] items-center p-3 rounded-xl border-2 my-1 ${
-                      isSelected
-                        ? "border-indigo-500 bg-indigo-500/20"
-                        : "border-slate-800 bg-slate-900"
-                    }`}
-                    onPress={() => setSelectedFeeling(option.key)}
-                    disabled={isLoading}
+              {emotionOptions.map((option) => (
+                <TouchableOpacity
+                  key={option.key}
+                  className={`w-[48%] items-center p-3 rounded-xl border-2 my-1 ${selectedFeeling === option.key ? "border-indigo-500 bg-indigo-500/20" : "border-slate-800 bg-slate-900"}`}
+                  onPress={() => setSelectedFeeling(option.key)}
+                  disabled={isGlobalLoading}
+                >
+                  <option.icon
+                    color={
+                      selectedFeeling === option.key ? "#818CF8" : "#94A3B8"
+                    }
+                    size={24}
+                  />
+                  <Text
+                    className={`mt-1 font-medium ${selectedFeeling === option.key ? "text-indigo-400" : "text-slate-400"}`}
                   >
-                    <option.icon
-                      color={isSelected ? "#818CF8" : "#94A3B8"}
-                      size={24}
-                    />
-                    <Text
-                      className={`mt-1 font-medium ${
-                        isSelected ? "text-indigo-400" : "text-slate-400"
-                      }`}
-                    >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
             <Text className="text-lg font-semibold text-white mb-2">
-              2. Quel est le plus grand apprentissage de cette expérience ?
+              2. Qu'avez-vous appris ?
             </Text>
             <TextInput
               className="w-full h-32 p-4 bg-slate-900 text-white rounded-xl border border-slate-800 mb-8"
-              placeholder="Ex : J'ai réalisé que la peur était pire que l'action..."
               placeholderTextColor="#64748B"
               multiline
               value={notes}
               onChangeText={setNotes}
-              editable={!isLoading}
+              editable={!isGlobalLoading}
             />
           </ScrollView>
 
-          {/* Bouton de Sauvegarde */}
           <TouchableOpacity
-            className={`w-full py-4 rounded-2xl flex-row items-center justify-center ${
-              isLoading ? "bg-indigo-700/50" : "bg-indigo-600"
-            } active:scale-95`}
+            className={`w-full py-4 rounded-2xl flex-row items-center justify-center ${isGlobalLoading ? "bg-indigo-700/50" : "bg-indigo-600"}`}
             onPress={handleSave}
-            disabled={isLoading}
+            disabled={isGlobalLoading}
           >
-            {isLoading ? (
-              <Loader2 color="white" size={20} className="mr-2 animate-spin" />
+            {isGlobalLoading ? (
+              <Loader2 color="white" size={20} className="animate-spin" />
             ) : (
               <Text className="text-white font-bold text-lg">
-                Confirmer et Ancrer le Progrès
+                Confirmer l'analyse
               </Text>
             )}
           </TouchableOpacity>

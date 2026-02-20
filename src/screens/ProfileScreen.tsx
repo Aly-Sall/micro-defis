@@ -47,33 +47,20 @@ export default function ProfileScreen() {
   }, [isFocused]);
 
   // --- FONCTION DE RÉINITIALISATION ---
-  const handleFullReset = () => {
-    Alert.alert(
-      "Réinitialisation Totale",
-      "Êtes-vous sûr de vouloir effacer TOUS vos progrès ? Cette action est irréversible.",
-      [
-        { text: "Annuler", style: "cancel" },
-        {
-          text: "Réinitialiser",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await AsyncStorage.removeItem(COMPLETED_CHALLENGES_KEY);
-              await AsyncStorage.removeItem(USER_LEVEL_KEY);
-              await AsyncStorage.removeItem(REFLECTIONS_KEY);
-              await AsyncStorage.removeItem(ACHIEVED_BADGES_KEY);
-              setUnlockedBadgeIds([]);
-              Alert.alert(
-                "Réinitialisation Complète",
-                "Progrès effacés. Veuillez relancer l'application."
-              );
-            } catch (e) {
-              console.error("Erreur lors de la réinitialisation :", e);
-            }
-          },
-        },
-      ]
-    );
+  const resetLocalData = async () => {
+    const keys = [
+      "@DailyChallenge_Data_v1",
+      "@CompletedChallenges",
+      "@ChallengeReflections",
+      "@UserArchetype",
+      "@UserLevel",
+    ];
+    try {
+      await AsyncStorage.multiRemove(keys);
+      console.log("Données locales réinitialisées");
+    } catch (e) {
+      console.error("Erreur reset:", e);
+    }
   };
 
   return (
@@ -195,7 +182,7 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           className="flex-row items-center justify-center p-4 bg-red-100 dark:bg-yellow-900/40 rounded-xl border border-red-200 dark:border-transparent"
-          onPress={handleFullReset}
+          onPress={resetLocalData}
         >
           <RefreshCw
             color={colorScheme === "dark" ? "#FBBF24" : "#dc2626"}

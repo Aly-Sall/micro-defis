@@ -2,10 +2,20 @@
 
 export const analyzeSentiment = async (text: string) => {
   try {
-    // Remplace par ta véritable clé API Gemini
     const API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-    const URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${API_KEY}`;
 
+    // Utilisation du modèle Gemini 3 Flash disponible dans ta liste
+    const model = "gemini-3-flash-preview";
+    const URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
+
+    if (!API_KEY) {
+      console.error("Clé API manquante dans le .env");
+      return { score: 0, label: "Erreur Config" };
+    }
+    console.log(
+      "DEBUG_KEY:",
+      process.env.EXPO_PUBLIC_GEMINI_API_KEY?.substring(0, 10) + "...",
+    );
     const response = await fetch(URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -14,25 +24,34 @@ export const analyzeSentiment = async (text: string) => {
           {
             parts: [
               {
-                text: `Analyse le sentiment du texte suivant écrit par quelqu'un qui travaille sur son anxiété sociale. 
-            Réponds UNIQUEMENT avec un JSON au format suivant : {"score": number, "label": string}. 
-            Le score doit être compris entre -1 (très anxieux/négatif) et 1 (très confiant/positif). 
-            Texte : "${text}"`,
+                text: `Tu es un coach. Analyse le sentiment du texte suivant. 
+            Réponds UNIQUEMENT avec un JSON au format : {"score": number, "label": string}. 
+            Le score est entre -1 et 1. Texte : "${text}"`,
               },
             ],
           },
         ],
+        generationConfig: {
+          responseMimeType: "application/json",
+        },
       }),
     });
 
     const data = await response.json();
-    const rawText = data.candidates[0].content.parts[0].text;
 
-    // Nettoyage au cas où l'IA ajoute des balises markdown
-    const cleanJson = rawText.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleanJson);
+    if (data.error) {
+      console.error("Erreur API Google :", data.error.message);
+      return { score: 0, label: "Erreur API" };
+    }
+
+    if (!data.candidates || data.candidates.length === 0) {
+      return { score: 0, label: "Neutre" };
+    }
+
+    const rawResult = data.candidates[0].content.parts[0].text;
+    return JSON.parse(rawResult);
   } catch (error) {
-    console.error("Erreur lors de l'analyse IA :", error);
-    return { score: 0, label: "Neutre" };
+    console.error("Erreur technique IA :", error);
+    return { score: 0, label: "Erreur" };
   }
 };

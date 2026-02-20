@@ -5,389 +5,274 @@ import {
   ScrollView,
   ActivityIndicator,
   TouchableOpacity,
+  Alert,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useIsFocused } from "@react-navigation/native";
-import { Flame, Trophy, Check } from "lucide-react-native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
+import {
+  Flame,
+  Trophy,
+  Check,
+  Brain,
+  Sparkles,
+  ArrowRight,
+} from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import ConfettiCannon from "react-native-confetti-cannon";
 
-// Imports Personnels
-import { Challenge, getSmartChallenge } from "../data/challenges";
+// Imports internes
 import ChallengeCard from "../components/ChallengeCard";
-import { useTheme } from "../context/ThemeContext"; // Pour gérer les couleurs des icônes
-import { FOCUS_AREAS, FocusArea } from "../data/focus_areas";
+import { supabase } from "../lib/supabase";
+import ChallengeReflectionModal from "../components/ChallengeReflectionModal";
+import { analyzeSentiment } from "../services/aiService"; // Ton nouveau service de mentorat
 
-// Clés de stockage
 const STORAGE_KEY = "@DailyChallenge_Data_v1";
-const COMPLETED_CHALLENGES_KEY = "@CompletedChallenges";
-const REFLECTIONS_KEY = "@ChallengeReflections";
-const USER_ARCHETYPE_KEY = "@UserArchetype";
-const USER_LEVEL_KEY = "@UserLevel";
-
-const getGreeting = (archetype: string | null) => {
-  const hour = new Date().getHours();
-  const name = archetype ? archetype.split(" ")[1] : "Champion";
-  if (hour < 12) return `Bonjour, ${name} ! ☀️`;
-  if (hour < 18) return `Garde le rythme, ${name} ! 🚀`;
-  return `Belle soirée, ${name} ! 🌙`;
-};
+const ASSESSMENT_KEY = "@UserAssessmentResult";
 
 export default function HomeScreen() {
-  const { colorScheme } = useTheme(); // Récupère le mode (light/dark)
   const isFocused = useIsFocused();
+  const navigation = useNavigation<any>();
   const confettiRef = useRef<any>(null);
 
   // États
-  const [currentChallenge, setCurrentChallenge] = useState<Challenge | null>(
-    null,
-  );
+  const [currentChallenge, setCurrentChallenge] = useState<any>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const [streak, setStreak] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const [userArchetype, setUserArchetype] = useState<string | null>(null);
-  const [selectedFocus, setSelectedFocus] = useState<string | null>(null);
+  const [hasAssessment, setHasAssessment] = useState(false);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [aiMentorFeedback, setAiMentorFeedback] = useState<any>(null);
 
-  // --- CHARGEMENT ---
+  // --- LOGIQUE DE CHARGEMENT ---
   const loadDailyData = async () => {
     try {
       setIsLoading(true);
 
-      // 1. Récupération Profil
-      const storedArchetype = await AsyncStorage.getItem(USER_ARCHETYPE_KEY);
-      setUserArchetype(storedArchetype);
+      // 1. Vérifier si l'évaluation IA a été faite
+      const assessmentData = await AsyncStorage.getItem(ASSESSMENT_KEY);
+      if (!assessmentData) {
+        setHasAssessment(false);
+        setIsLoading(false);
+        return;
+      }
+      setHasAssessment(true);
+      const parsedAssessment = JSON.parse(assessmentData);
 
-      const storedLevel = await AsyncStorage.getItem(USER_LEVEL_KEY);
-      const userLevel = storedLevel ? parseInt(storedLevel, 10) : 1;
-
-      // 2. Récupération Données du jour
+      // 2. Charger le défi du jour (stocké ou généré)
       const jsonValue = await AsyncStorage.getItem(STORAGE_KEY);
       const today = new Date().toDateString();
 
       if (jsonValue != null) {
         const data = JSON.parse(jsonValue);
-
-        // Est-ce que les données datent d'aujourd'hui ?
         if (data.date === today) {
           setCurrentChallenge(data.challenge);
           setIsCompleted(data.completed);
           setStreak(data.streak || 0);
-          if (data.challenge?.focusKey)
-            setSelectedFocus(data.challenge.focusKey);
+          setAiMentorFeedback(data.aiFeedback || null);
         } else {
-          // C'est une NOUVELLE JOURNÉE
-          // On génère un défi adapté au niveau
-          const newChallenge = getSmartChallenge(
-            userLevel,
-            [],
-            selectedFocus || undefined,
-          );
-
-          // Calcul du streak : si hier était validé, on garde, sinon 0
-          const newStreak =
-            wasYesterday(data.date) && data.completed ? data.streak : 0;
-
-          setCurrentChallenge(newChallenge);
-          setIsCompleted(false);
-          setStreak(newStreak);
-
-          saveDailyData(newChallenge, false, newStreak, today);
+          // Nouvelle journée : On utilise les données de l'évaluation pour le nouveau défi
+          setupNewDay(parsedAssessment, data.streak, data.completed);
         }
       } else {
-        // PREMIER LANCEMENT DE L'HISTOIRE
-        const newChallenge = getSmartChallenge(
-          userLevel,
-          [],
-          selectedFocus || undefined,
-        );
-        setCurrentChallenge(newChallenge);
-        setStreak(0);
-        saveDailyData(newChallenge, false, 0, today);
+        // Premier défi après évaluation
+        setupNewDay(parsedAssessment, 0, false);
       }
     } catch (e) {
-      console.error("Erreur chargement", e);
+      console.error("Erreur chargement HomeScreen:", e);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const wasYesterday = (dateString: string) => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday.toDateString() === dateString;
+  const setupNewDay = async (
+    assessment: any,
+    oldStreak: number,
+    wasCompleted: boolean,
+  ) => {
+    // Ici, le défi vient de l'évaluation initiale ou d'une rotation
+    const newChallenge = assessment.challenge;
+    const newStreak = wasCompleted ? oldStreak : 0;
+
+    setCurrentChallenge(newChallenge);
+    setIsCompleted(false);
+    setStreak(newStreak);
+
+    await saveDailyData(
+      newChallenge,
+      false,
+      newStreak,
+      new Date().toDateString(),
+      null,
+    );
   };
 
   const saveDailyData = async (
-    challenge: Challenge,
+    challenge: any,
     completed: boolean,
     streakCount: number,
     date: string,
+    aiFeedback: any,
   ) => {
-    const data = { challenge, completed, streak: streakCount, date };
+    const data = {
+      challenge,
+      completed,
+      streak: streakCount,
+      date,
+      aiFeedback,
+    };
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   };
 
   useEffect(() => {
-    if (isFocused) {
-      loadDailyData();
-    }
+    if (isFocused) loadDailyData();
   }, [isFocused]);
-
-  // --- CHANGEMENT DE FOCUS ---
-  const handleFocusChange = async (focusKey: string) => {
-    // Si le défi est déjà complété, on ne change rien (ou on pourrait proposer un défi bonus)
-    if (isCompleted) return;
-
-    setSelectedFocus(focusKey);
-    setIsLoading(true);
-
-    const storedLevel = await AsyncStorage.getItem(USER_LEVEL_KEY);
-    const userLevel = storedLevel ? parseInt(storedLevel, 10) : 1;
-
-    // On génère un nouveau défi basé sur ce focus
-    const newChallenge = getSmartChallenge(userLevel, [], focusKey);
-    setCurrentChallenge(newChallenge);
-
-    await saveDailyData(newChallenge, false, streak, new Date().toDateString());
-    setIsLoading(false);
-  };
 
   // --- ACTIONS ---
 
   const handleCompleteChallenge = async () => {
-    if (!currentChallenge) return;
-
-    // Feedback Sensoriel
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     if (confettiRef.current) confettiRef.current.start();
+    setIsModalVisible(true);
+  };
 
-    const newStreak = streak + 1;
-    setStreak(newStreak);
-    setIsCompleted(true);
-
-    const todayDateObj = new Date();
-    const todayString = todayDateObj.toDateString();
-    const dateKey = todayDateObj.toISOString().split("T")[0]; // YYYY-MM-DD
-
-    // Sauvegarde locale état jour
-    await saveDailyData(currentChallenge, true, newStreak, todayString);
-
+  const onSaveReflection = async (
+    feeling: string,
+    notes: string,
+    aiData: { score: number; label: string },
+  ) => {
     try {
-      // 1. Mise à jour Calendrier (Heatmap)
-      const existingDatesJson = await AsyncStorage.getItem(
-        COMPLETED_CHALLENGES_KEY,
-      );
-      const existingDates = existingDatesJson
-        ? JSON.parse(existingDatesJson)
-        : {};
-      existingDates[dateKey] = true;
-      await AsyncStorage.setItem(
-        COMPLETED_CHALLENGES_KEY,
-        JSON.stringify(existingDates),
-      );
+      setIsLoading(true);
 
-      // 2. Mise à jour Journal (Historique)
-      const existingReflectionsJson =
-        await AsyncStorage.getItem(REFLECTIONS_KEY);
-      const existingReflections = existingReflectionsJson
-        ? JSON.parse(existingReflectionsJson)
-        : [];
+      // On utilise les données déjà analysées par le modal via analyzeSentiment
+      const aiResult = {
+        feedback: "Analyse terminée",
+        reframe: aiData.label,
+        score: aiData.score,
+      };
+      setAiMentorFeedback(aiResult);
 
-      const alreadyExists = existingReflections.some(
-        (item: any) =>
-          item.date === dateKey && item.challengeId === currentChallenge.id,
+      // Sauvegarde Supabase (Bypass si non connecté comme discuté)
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const userId = user?.id || "00000000-0000-0000-0000-000000000000";
+
+      await supabase.from("challenge_logs").insert({
+        user_id: userId,
+        challenge_id: currentChallenge.id,
+        reflection: notes,
+        emotion: feeling,
+        sentiment_score: aiData.score,
+        ai_feedback: aiData.label,
+        ai_reframe: aiResult.reframe,
+      });
+
+      const newStreak = streak + 1;
+      setStreak(newStreak);
+      setIsCompleted(true);
+      setIsModalVisible(false);
+
+      await saveDailyData(
+        currentChallenge,
+        true,
+        newStreak,
+        new Date().toDateString(),
+        aiResult,
       );
-
-      if (!alreadyExists) {
-        const newEntry = {
-          date: dateKey,
-          challengeId: currentChallenge.id,
-          feeling: "Excited", // À améliorer plus tard avec une modale
-          notes: `Défi ${currentChallenge.category || "Général"} validé ! +${
-            currentChallenge.xp || 10
-          } XP`,
-        };
-        const updatedReflections = [newEntry, ...existingReflections];
-        await AsyncStorage.setItem(
-          REFLECTIONS_KEY,
-          JSON.stringify(updatedReflections),
-        );
-      }
     } catch (e) {
-      console.error("Erreur historique", e);
+      Alert.alert("Erreur", "L'IA n'a pas pu analyser ton texte.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleSkipChallenge = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    const storedLevel = await AsyncStorage.getItem(USER_LEVEL_KEY);
-    const userLevel = storedLevel ? parseInt(storedLevel, 10) : 1;
-
-    // On exclut le défi actuel pour ne pas retomber dessus
-    const newChallenge = getSmartChallenge(
-      userLevel,
-      [currentChallenge?.id || ""],
-      selectedFocus || undefined,
-    );
-
-    setCurrentChallenge(newChallenge);
-    setIsCompleted(false);
-    await saveDailyData(newChallenge, false, streak, new Date().toDateString());
-  };
-
-  if (isLoading || !currentChallenge) {
+  // --- RENDU ÉCRAN VIDE (Pas d'évaluation) ---
+  if (!isLoading && !hasAssessment) {
     return (
-      <View className="flex-1 bg-slate-50 dark:bg-slate-950 justify-center items-center">
-        <ActivityIndicator size="large" color="#6366f1" />
+      <View className="flex-1 bg-slate-950 justify-center items-center px-8">
+        <Brain color="#818CF8" size={60} />
+        <Text className="text-white text-2xl font-bold mt-6 text-center">
+          Prêt pour ton diagnostic ?
+        </Text>
+        <Text className="text-slate-400 text-center mt-2 mb-8">
+          L'IA doit évaluer tes limites pour te proposer un défi adapté.
+        </Text>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("Assessment")}
+          className="bg-indigo-600 px-8 py-4 rounded-2xl flex-row items-center"
+        >
+          <Text className="text-white font-bold mr-2">
+            Commencer l'évaluation
+          </Text>
+          <ArrowRight color="white" size={20} />
+        </TouchableOpacity>
       </View>
     );
   }
 
+  if (isLoading) return <ActivityIndicator className="flex-1 bg-slate-950" />;
+
   return (
-    // FOND : Blanc cassé (Jour) / Bleu nuit (Nuit)
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      {/* Header */}
-      <View
-        className="pt-14 pb-6 px-6 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/90"
-        accessible={true}
-        accessibilityLabel={`En-tête. ${getGreeting(userArchetype)}`}
-      >
-        <Text className="text-slate-500 dark:text-slate-400 font-medium text-sm mb-1 uppercase tracking-wider">
-          {getGreeting(userArchetype)}
-        </Text>
-        <Text
-          className="text-3xl font-extrabold text-slate-900 dark:text-white"
-          accessibilityRole="header"
-        >
-          Micro-Défis
-        </Text>
-      </View>
-
-      <ScrollView
-        className="flex-1 px-6 pt-8"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Stats Bar */}
-        <View className="flex-row justify-between mb-8">
-          {/* Streak */}
-          <View
-            className="flex-row items-center bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-800 shadow-sm"
-            accessible={true}
-            accessibilityLabel={`Série en cours : ${streak} jours`}
-          >
-            <Flame
-              color={
-                streak > 0
-                  ? "#F59E0B"
-                  : colorScheme === "dark"
-                    ? "#64748B"
-                    : "#94a3b8"
-              }
-              size={20}
-            />
-            <Text
-              className={`ml-2 font-bold text-lg ${
-                streak > 0
-                  ? "text-amber-500"
-                  : "text-slate-500 dark:text-slate-400"
-              }`}
-            >
-              {streak} Jours
-            </Text>
-          </View>
-
-          {/* XP Total estimé */}
-          <View
-            className="flex-row items-center bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-800 shadow-sm"
-            accessible={true}
-            accessibilityLabel={`Expérience gagnée : ${streak * 25} points`}
-          >
-            <Trophy
-              color={colorScheme === "dark" ? "#A5B4FC" : "#6366f1"}
-              size={18}
-            />
-            <Text className="ml-2 font-bold text-slate-600 dark:text-slate-300">
-              {streak * 25} XP
-            </Text>
+    <View className="flex-1 bg-slate-950">
+      <ScrollView className="px-6 pt-12">
+        <View className="flex-row justify-between items-center mb-8">
+          <Text className="text-3xl font-bold text-white">Ton Défi IA</Text>
+          <View className="bg-slate-900 px-4 py-2 rounded-full border border-slate-800 flex-row items-center">
+            <Flame color={streak > 0 ? "#F59E0B" : "#475569"} size={20} />
+            <Text className="text-white ml-2 font-bold">{streak}</Text>
           </View>
         </View>
 
-        {/* SÉLECTEUR DE FOCUS (Intention du jour) */}
-        {!isCompleted && (
-          <View className="mb-6">
-            <Text className="text-slate-600 dark:text-slate-300 font-semibold mb-3 ml-1">
-              Mon intention du jour
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              className="flex-row"
-            >
-              {FOCUS_AREAS.map((area) => {
-                const isActive = selectedFocus === area.key;
-                return (
-                  <TouchableOpacity
-                    key={area.key}
-                    onPress={() => handleFocusChange(area.key)}
-                    className={`mr-3 px-4 py-2 rounded-full border ${
-                      isActive
-                        ? "bg-indigo-100 border-indigo-500 dark:bg-indigo-900/50 dark:border-indigo-400"
-                        : "bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"
-                    }`}
-                  >
-                    <Text
-                      className={`${isActive ? "text-indigo-700 dark:text-indigo-300 font-bold" : "text-slate-600 dark:text-slate-400"}`}
-                    >
-                      {area.emoji} {area.title}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* CARTE PRINCIPALE (Composant Accessible) */}
         <ChallengeCard
           challenge={currentChallenge}
           isCompleted={isCompleted}
           onSuccess={handleCompleteChallenge}
-          onSkip={handleSkipChallenge}
-          buttonContent={
-            isCompleted ? (
-              <View className="flex-row items-center">
-                <Text className="text-green-700 font-bold text-lg mr-2">
-                  Défi Validé !
-                </Text>
-                <Check size={24} color="#15803d" strokeWidth={3} />
-              </View>
-            ) : (
-              <Text className="text-indigo-600 font-bold text-lg">
-                J'ai relevé le défi !
-              </Text>
+          onSkip={() =>
+            Alert.alert(
+              "Patience",
+              "Le mentor a choisi ce défi spécifiquement pour toi.",
             )
+          }
+          buttonContent={
+            <Text className="text-indigo-600 font-bold text-lg">
+              {isCompleted ? "Défi Terminé ✨" : "J'ai relevé le défi !"}
+            </Text>
           }
         />
 
-        <View className="h-24" />
+        {/* AFFICHAGE DU MENTOR IA APRÈS COMPLÉTION */}
+        {isCompleted && aiMentorFeedback && (
+          <View className="mt-8 p-5 bg-indigo-500/10 border border-indigo-500/30 rounded-3xl">
+            <View className="flex-row items-center mb-3">
+              <Sparkles color="#818CF8" size={20} />
+              <Text className="text-indigo-400 font-bold ml-2 uppercase text-xs tracking-widest">
+                Conseil du Mentor
+              </Text>
+            </View>
+            <Text className="text-white text-lg font-medium mb-2">
+              {aiMentorFeedback.feedback}
+            </Text>
+            <View className="h-[1px] bg-indigo-500/20 my-2" />
+            <Text className="text-slate-400 italic text-sm">
+              "{aiMentorFeedback.reframe}"
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
-      {/* Confettis (Ignorés par l'accessibilité) */}
-      <View
-        accessible={false}
-        pointerEvents="none"
-        className="absolute top-0 left-0 right-0 bottom-0"
-      >
-        <ConfettiCannon
-          count={200}
-          origin={{ x: -10, y: 0 }}
-          autoStart={false}
-          ref={confettiRef}
-          fadeOut={true}
-          fallSpeed={3000}
-        />
-      </View>
+      <ChallengeReflectionModal
+        isVisible={isModalVisible}
+        onClose={() => setIsModalVisible(false)}
+        onSave={onSaveReflection}
+        isLoading={isLoading}
+      />
+
+      <ConfettiCannon
+        ref={confettiRef}
+        count={200}
+        origin={{ x: -10, y: 0 }}
+        autoStart={false}
+      />
     </View>
   );
 }
